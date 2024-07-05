@@ -2,6 +2,7 @@ package com.dreiklang.mirrorserver
 
 import android.Manifest.permission
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -18,6 +19,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.dreiklang.mirrorserver.ui.theme.MirrorServerTheme
 import fi.iki.elonen.NanoHTTPD
+import kotlinx.coroutines.runBlocking
 import org.webrtc.AudioTrack
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
@@ -32,6 +34,7 @@ import org.webrtc.PeerConnectionFactory
 import org.webrtc.PeerConnectionFactory.InitializationOptions
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import org.webrtc.WebRTCException
 import org.webrtc.audio.AudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule.AudioRecordErrorCallback
@@ -40,16 +43,20 @@ import org.webrtc.audio.JavaAudioDeviceModule.AudioRecordStateCallback
 import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackErrorCallback
 import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackStartErrorCode
 import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackStateCallback
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 
-
+/**
+ * local ice candidates (to be send) only start to gather after set local desc (eg. from offer)
+ */
 class MainActivity : ComponentActivity() {
 
     companion object {
         private val TAG: String? = MainActivity::class.simpleName
     }
 
-    private var localPeerConnection: PeerConnection? = null
-    // private var remotePeerConnection: PeerConnection? = null
+    private var peerConnection: PeerConnection? = null
     private var localAudioTrack: AudioTrack? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,7 +87,6 @@ class MainActivity : ComponentActivity() {
         // multiple routes? https://www.baeldung.com/nanohttpd
         val webserver = object : NanoHTTPD(8080) {
             override fun serve(session: IHTTPSession): Response {
-                // return newChunkedResponse(Response.Status.OK, MIME_HTML, assets.open("index.html"))
                 val uri = session.uri.removePrefix("/").ifEmpty { "index.html" }
                 Log.i(TAG, "Loading $uri")
 
@@ -90,8 +96,19 @@ class MainActivity : ComponentActivity() {
                             val postBody: Map<String, String> = HashMap()
                             session.parseBody(postBody)
                             val offer = postBody["postData"]
-                            acceptCall(offer)
-                            return newFixedLengthResponse("""{"requestBody": "test"}""");
+                            runBlocking {
+                                process(offer)
+                            }
+
+                            // #4 wait ice candidates gathering...
+                            // TODO replace by graceful solution (eg. suspend callback)
+                            Thread.sleep(5_000)
+
+                            // #5 get local answer desc (ice-candidate-complete)
+                            val answer = peerConnection!!.localDescription.description
+
+                            Log.i(TAG, "sending local answer desc: $answer")
+                            return newFixedLengthResponse(answer)
 
                         } catch (ex: Exception) {
                             val msg = "parse call req failed"
@@ -146,6 +163,34 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun start(peerConnectionFactory: PeerConnectionFactory) {
+        // empty iceServerList
+        val iceServers: List<IceServer> = ArrayList()
+
+        //create sdpConstraints
+        val sdpConstraints = MediaConstraints()
+        //sdpConstraints.mandatory.add(MediaConstraints.KeyValuePair("offerToReceiveAudio", "true"))
+
+        //creating localPeerConnection
+        peerConnection = peerConnectionFactory.createPeerConnection(
+            iceServers,
+            sdpConstraints,
+            object : CustomPeerConnectionObserver() {
+                override fun onIceCandidate(iceCandidate: IceCandidate) {
+                    super.onIceCandidate(iceCandidate)
+                    Log.d(TAG, "local ice candidate created. preparing to deliver...")
+                    peerConnection!!.addIceCandidate(iceCandidate)
+                }
+
+                override fun onAddStream(mediaStream: MediaStream) {
+                    super.onAddStream(mediaStream)
+                    Log.i(TAG, "config system audio")
+                    val am: AudioManager = applicationContext.getSystemService(AUDIO_SERVICE) as AudioManager
+                    am.isSpeakerphoneOn = true
+                    val remoteAudioTrack = mediaStream.audioTracks[0]
+                    Log.i(TAG, "mic is muted: ${am.isMicrophoneMute}")
+                }
+            })
+
         // Now create a VideoCapturer instance. Callback methods are there if you want to do something! Duh!
         // TODO use audio capturer
         // val videoCapturerAndroid: VideoCapturer = getVideoCapturer(CustomCameraEventsHandler())
@@ -158,28 +203,7 @@ class MainActivity : ComponentActivity() {
         val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
         localAudioTrack = peerConnectionFactory.createAudioTrack("101", audioSource)
         localAudioTrack!!.setEnabled(true)
-
-        // empty iceServerList
-        val iceServers: List<IceServer> = ArrayList()
-
-        //create sdpConstraints
-        val sdpConstraints = MediaConstraints()
-        //sdpConstraints.mandatory.add(MediaConstraints.KeyValuePair("offerToReceiveAudio", "true"))
-
-        //creating localPeerConnection
-        localPeerConnection = peerConnectionFactory.createPeerConnection(
-            iceServers,
-            sdpConstraints,
-            object : CustomPeerConnectionObserver() {
-                override fun onIceCandidate(iceCandidate: IceCandidate) {
-                    super.onIceCandidate(iceCandidate)
-                    Log.d(TAG, "ice candidate found. adding...")
-                    localPeerConnection!!.addIceCandidate(iceCandidate)
-                }
-            })
-
-        //creating local audiotrack
-        localPeerConnection!!.addTrack(localAudioTrack)
+        peerConnection!!.addTrack(localAudioTrack)
     }
 
     private fun call(peerConnectionFactory: PeerConnectionFactory) {
@@ -228,31 +252,43 @@ class MainActivity : ComponentActivity() {
         */
     }
 
-    private fun gotRemoteStream(stream: MediaStream) {
-        //we have remote video stream. add to the renderer.
-        val audioTrack: AudioTrack = stream.audioTracks.first()
-        runOnUiThread {
-            try {
-                // TODO play remote audio
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    private fun acceptCall(offer: String?) {
+    /**
+     * suspend until local answer desc creation callback
+     */
+    private suspend fun process(offer: String?) = suspendCoroutine<String> { cont ->
         Log.i(TAG, "call offer incoming: sdp[$offer]")
 
-        localPeerConnection!!.setRemoteDescription(
+        // #1 set as remote offer desc
+        peerConnection!!.setRemoteDescription(
             object: CustomSdpObserver() {
                 override fun onSetSuccess() {
                     super.onSetSuccess()
-                    localPeerConnection!!.createAnswer(object: CustomSdpObserver() {
+
+                    // #2 create local answer desc (ice-candidate-empty)
+                    peerConnection!!.createAnswer(object: CustomSdpObserver() {
                         override fun onCreateSuccess(sessionDescription: SessionDescription) {
                             super.onCreateSuccess(sessionDescription)
-                            Log.i(TAG, "answer created: ${sessionDescription.type}: sdp[${sessionDescription.description}]")
+                            Log.i(TAG, "empty answer created: ${sessionDescription.type}: sdp[${sessionDescription.description}]")
+
+                            // #3 set local answer desc (inits ice-gathering)
+                            peerConnection!!.setLocalDescription(object: CustomSdpObserver() {
+                                override fun onSetSuccess() {
+                                    super.onSetSuccess()
+                                    cont.resume(sessionDescription.description)
+                                }
+                            }, sessionDescription)
+                        }
+
+                        override fun onCreateFailure(s: String) {
+                            super.onCreateFailure(s)
+                            cont.resumeWithException(WebRTCException("create answer desc failed."))
                         }
                     }, MediaConstraints())
+                }
+
+                override fun onSetFailure(s: String) {
+                    super.onSetFailure(s)
+                    cont.resumeWithException(WebRTCException("set as remote desc failed."))
                 }
             },
             // offer sdp misses newline at end (truncated)

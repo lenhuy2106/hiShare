@@ -1,21 +1,56 @@
+const button = document.getElementById("button");
+const peerConnection = new RTCPeerConnection();
 
-async function call() {
-    const peerConnection = new RTCPeerConnection();
-    var offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
+async function connect() {
+    button.innerText = "connecting..."
+    button.disabled = true;
+    peerConnection.addEventListener("icecandidate", onLocalIceCandidateCreated);
+    peerConnection.addEventListener("iceconnectionstatechange", onIceConnectionStateChanged);
+    peerConnection.addEventListener("track", onTrackAdded);
 
-    console.log("offer description (sdp) created.")
-    console.log(offer)
+    var emptyOffer = await peerConnection.createOffer({ "offerToReceiveAudio": true });
+    console.log("local offer desc (ice-candidates-empty sdp) created: ", emptyOffer.sdp)
 
-    // ajax call: await answer description (sdp)
-
-    fetch("send_offer", {
-      method: "POST",
-      body: offer.sdp,
-      headers: {}
-    })
-      .then((response) => console.log(response));
-      // .then((json) => console.log(json));
+    // inits ice candidates gathering
+    await peerConnection.setLocalDescription(emptyOffer);
 }
 
-call()
+async function onLocalIceCandidateCreated(ev) {
+    const iceCandidate = ev.candidate;
+    console.log("local ice candidate created: ", iceCandidate);
+
+    if (event.candidate === null) {
+        console.log("ice candidates gathering completed.")
+        // https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/icecandidate_event#indicating_that_ice_gathering_is_complete
+
+        const completeOffer = peerConnection.localDescription;
+        console.log("sending local offer desc...: ", completeOffer)
+        const response = await fetch("send_offer", {
+          method: "POST",
+          body: completeOffer.sdp,
+          headers: {}
+        })
+
+        // answer desc is promise itself
+        const answer_desc = await response.text();
+        console.log("response received: ", response)
+        console.log("remote answer desc: ", answer_desc);
+
+        await peerConnection.setRemoteDescription({type: "answer", sdp: answer_desc});
+        console.log("set remote answer desc success.");
+    }
+}
+
+async function onIceConnectionStateChanged(ev) {
+    console.log("iceconnectionstatechange: ", peerConnection.iceConnectionState);
+    button.innerText = peerConnection.iceConnectionState;
+}
+
+async function onTrackAdded(ev) {
+        console.log("on track negotiated: ", ev.track.kind);
+        // play audio in browser
+        const audioCtx = new AudioContext();
+        const stream = new MediaStream([ev.track]);
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(audioCtx.destination);
+}

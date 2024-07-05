@@ -2,7 +2,6 @@ package com.dreiklang.mirrorserver
 
 import android.Manifest.permission
 import android.content.pm.PackageManager
-import android.media.AudioManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -50,7 +49,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private var localPeerConnection: PeerConnection? = null
-    private var remotePeerConnection: PeerConnection? = null
+    // private var remotePeerConnection: PeerConnection? = null
     private var localAudioTrack: AudioTrack? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,28 +77,49 @@ class MainActivity : ComponentActivity() {
         }
 
         // init webserver
+        // multiple routes? https://www.baeldung.com/nanohttpd
         val webserver = object : NanoHTTPD(8080) {
             override fun serve(session: IHTTPSession): Response {
                 // return newChunkedResponse(Response.Status.OK, MIME_HTML, assets.open("index.html"))
                 val uri = session.uri.removePrefix("/").ifEmpty { "index.html" }
                 Log.i(TAG, "Loading $uri")
-                try {
-                    val mime = when (uri.substringAfterLast(".")) {
-                        "ico" -> "image/x-icon"
-                        "css" -> "text/css"
-                        "js" -> "application/javascript"
-                        else -> "text/html"
-                    }
 
-                    return newChunkedResponse(
-                        Response.Status.OK,
-                        mime,
-                        assets.open("www/$uri") // prefix with www because your files are not in the root folder in assets
-                    )
-                } catch (ex: Exception) {
-                    val message = "Failed to load asset $uri because $ex"
-                    Log.e(TAG, message, ex)
-                    return newFixedLengthResponse(message)
+                when (uri) {
+                    "send_offer" -> { // incoming call offer
+                        try {
+                            val postBody: Map<String, String> = HashMap()
+                            session.parseBody(postBody)
+                            val offer = postBody["postData"]
+                            acceptCall(offer)
+                            return newFixedLengthResponse("""{"requestBody": "test"}""");
+
+                        } catch (ex: Exception) {
+                            val msg = "parse call req failed"
+                            Log.e(TAG, msg, ex)
+                            return newFixedLengthResponse(msg)
+                        }
+                    }
+                    else -> { // index or assets
+                        try {
+                            val mime = when (uri.substringAfterLast(".")) {
+                                "ico" -> "image/x-icon"
+                                "css" -> "text/css"
+                                "js" -> "application/javascript"
+                                else -> "text/html"
+                            }
+
+                            return newChunkedResponse(
+                                Response.Status.OK,
+                                mime,
+                                assets.open("www/$uri")
+                            )
+
+                        } catch (ex: Exception) {
+                            val msg = "Failed to load asset $uri because $ex"
+                            Log.e(TAG, msg, ex)
+                            return newFixedLengthResponse(msg)
+                        }
+                    }
                 }
             }
         }.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
@@ -122,7 +142,7 @@ class MainActivity : ComponentActivity() {
             .createPeerConnectionFactory()
 
         start(peerConnectionFactory)
-        call(peerConnectionFactory)
+        // call(peerConnectionFactory)
     }
 
     private fun start(peerConnectionFactory: PeerConnectionFactory) {
@@ -134,14 +154,11 @@ class MainActivity : ComponentActivity() {
         val audioConstraints = MediaConstraints()
         audioConstraints.mandatory.add(MediaConstraints.KeyValuePair("offerToReceiveAudio", "true"))
 
-        //create an AudioSource instance
+        Log.i(TAG, "create audio source track")
         val audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
         localAudioTrack = peerConnectionFactory.createAudioTrack("101", audioSource)
         localAudioTrack!!.setEnabled(true)
-    }
 
-    private fun call(peerConnectionFactory: PeerConnectionFactory) {
-        //we already have video and audio tracks. Now create peerconnections
         // empty iceServerList
         val iceServers: List<IceServer> = ArrayList()
 
@@ -156,14 +173,20 @@ class MainActivity : ComponentActivity() {
             object : CustomPeerConnectionObserver() {
                 override fun onIceCandidate(iceCandidate: IceCandidate) {
                     super.onIceCandidate(iceCandidate)
-                    Log.d(TAG, "ice candidate.")
-                    onIceCandidateReceived(localPeerConnection!!, iceCandidate)
+                    Log.d(TAG, "ice candidate found. adding...")
+                    localPeerConnection!!.addIceCandidate(iceCandidate)
                 }
             })
 
         //creating local audiotrack
         localPeerConnection!!.addTrack(localAudioTrack)
+    }
 
+    private fun call(peerConnectionFactory: PeerConnectionFactory) {
+        //we already have video and audio tracks. Now create peerconnections
+
+
+        /*
         //creating remotePeerConnection
         remotePeerConnection = peerConnectionFactory.createPeerConnection(
             iceServers,
@@ -187,41 +210,22 @@ class MainActivity : ComponentActivity() {
                     // gotRemoteStream(mediaStream)
                 }
             })
+        */
 
+        /*
         Log.i(TAG, "#1 create offer session description (sdp).")
-        localPeerConnection!!.createOffer(object : CustomSdpObserver() {
+        peerConnection!!.createOffer(object : CustomSdpObserver() {
             override fun onCreateSuccess(sessionDescription: SessionDescription) {
                 super.onCreateSuccess(sessionDescription)
 
                 Log.i(TAG, "#2 set offer as local description: ${sessionDescription.type}: sdp[${sessionDescription.description}]")
-                localPeerConnection!!.setLocalDescription(
+                peerConnection!!.setLocalDescription(
                     CustomSdpObserver(),
                     sessionDescription
                 )
-
-
-                // TODO signaling (exchange sessiondescription)
-
-                remotePeerConnection!!.setRemoteDescription(
-                    CustomSdpObserver(),
-                    sessionDescription
-                )
-                remotePeerConnection!!.createAnswer(object : CustomSdpObserver() {
-                    override fun onCreateSuccess(sessionDescription: SessionDescription) {
-                        Log.i(TAG, "remote answer generated. Now set it as local desc for remote peer and remote desc for local peer.")
-                        super.onCreateSuccess(sessionDescription)
-                        remotePeerConnection!!.setLocalDescription(
-                            CustomSdpObserver(),
-                            sessionDescription
-                        )
-                        localPeerConnection!!.setRemoteDescription(
-                            CustomSdpObserver(),
-                            sessionDescription
-                        )
-                    }
-                }, MediaConstraints())
             }
         }, sdpConstraints)
+        */
     }
 
     private fun gotRemoteStream(stream: MediaStream) {
@@ -236,13 +240,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun onIceCandidateReceived(peerConnection: PeerConnection, iceCandidate: IceCandidate?) {
-        Log.i(TAG, "we have received ice candidate. We can set it to the other peer.")
-        if (peerConnection === localPeerConnection) {
-            remotePeerConnection!!.addIceCandidate(iceCandidate)
-        } else {
-            localPeerConnection!!.addIceCandidate(iceCandidate)
-        }
+    private fun acceptCall(offer: String?) {
+        Log.i(TAG, "call offer incoming: sdp[$offer]")
+
+        localPeerConnection!!.setRemoteDescription(
+            object: CustomSdpObserver() {
+                override fun onSetSuccess() {
+                    super.onSetSuccess()
+                    localPeerConnection!!.createAnswer(object: CustomSdpObserver() {
+                        override fun onCreateSuccess(sessionDescription: SessionDescription) {
+                            super.onCreateSuccess(sessionDescription)
+                            Log.i(TAG, "answer created: ${sessionDescription.type}: sdp[${sessionDescription.description}]")
+                        }
+                    }, MediaConstraints())
+                }
+            },
+            // offer sdp misses newline at end (truncated)
+            SessionDescription(SessionDescription.Type.OFFER, offer + "\n")
+        )
     }
 
     private fun createAudioDeviceModule(): AudioDeviceModule {

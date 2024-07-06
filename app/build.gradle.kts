@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.dreiklang.mirrorserver"
-        minSdk = 24
+        minSdk = 29
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -60,7 +60,7 @@ dependencies {
     implementation(libs.androidx.material3)
     // webRTC
     // implementation(libs.webrtc)
-    implementation(libs.stream.webrtc.android)
+    // implementation(libs.stream.webrtc.android)
     // webserver
     implementation(libs.nanohttpd.nanohttpd)
     testImplementation(libs.junit)

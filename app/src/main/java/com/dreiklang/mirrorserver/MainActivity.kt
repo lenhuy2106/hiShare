@@ -1,8 +1,12 @@
 package com.dreiklang.mirrorserver
 
 import android.Manifest.permission
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -32,6 +36,7 @@ import org.webrtc.PeerConnection.IceServer
 import org.webrtc.PeerConnection.SignalingState
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.PeerConnectionFactory.InitializationOptions
+import org.webrtc.Priority
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.WebRTCException
@@ -47,6 +52,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
+
 /**
  * local ice candidates (to be send) only start to gather after set local desc (eg. from offer)
  */
@@ -54,6 +60,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private val TAG: String? = MainActivity::class.simpleName
+        private const val REQ_CODE_PERM_RECORDING = 1
     }
 
     private var peerConnection: PeerConnection? = null
@@ -75,13 +82,17 @@ class MainActivity : ComponentActivity() {
 
         // logic
 
-        // TODO continue on permission granted callback
+        // TODO continue only on permission granted callback
         // ask permissions
         if (ContextCompat.checkSelfPermission(this, permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this,
                 arrayOf(permission.RECORD_AUDIO),
                 0);
         }
+
+        // TODO check if android 10
+        val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CODE_PERM_RECORDING);
 
         // init webserver
         // multiple routes? https://www.baeldung.com/nanohttpd
@@ -148,7 +159,7 @@ class MainActivity : ComponentActivity() {
 
         val adm = createAudioDeviceModule()
         adm.setSpeakerMute(false)
-        adm.setMicrophoneMute(false)
+        adm.setMicrophoneMute(true)
 
         // create a new PeerConnectionFactory instance
         val peerConnectionFactory = PeerConnectionFactory.builder()
@@ -160,6 +171,20 @@ class MainActivity : ComponentActivity() {
 
         start(peerConnectionFactory)
         // call(peerConnectionFactory)
+    }
+
+    public override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_CODE_PERM_RECORDING) {
+            if (resultCode == RESULT_OK) {
+                Log.i(TAG, "screen/audio recording permission granted.")
+                val audioCaptureIntent = Intent(this, MediaCaptureService::class.java).apply {
+                    action = MediaCaptureService.ACTION_START
+                    putExtra(MediaCaptureService.EXTRA_RESULT_DATA, data!!)
+                }
+                ContextCompat.startForegroundService(this, audioCaptureIntent)
+            }
+        }
     }
 
     private fun start(peerConnectionFactory: PeerConnectionFactory) {
@@ -183,11 +208,10 @@ class MainActivity : ComponentActivity() {
 
                 override fun onAddStream(mediaStream: MediaStream) {
                     super.onAddStream(mediaStream)
-                    Log.i(TAG, "config system audio")
+                    Log.i(TAG, "play remote audio from stream")
                     val am: AudioManager = applicationContext.getSystemService(AUDIO_SERVICE) as AudioManager
                     am.isSpeakerphoneOn = true
                     val remoteAudioTrack = mediaStream.audioTracks[0]
-                    Log.i(TAG, "mic is muted: ${am.isMicrophoneMute}")
                 }
             })
 
@@ -204,6 +228,18 @@ class MainActivity : ComponentActivity() {
         localAudioTrack = peerConnectionFactory.createAudioTrack("101", audioSource)
         localAudioTrack!!.setEnabled(true)
         peerConnection!!.addTrack(localAudioTrack)
+
+        //  Configuring jitter buffer size
+        peerConnection!!.senders.forEach { sender ->
+            sender.parameters.encodings.forEach { encoding ->
+                Log.i(TAG, "optimizing sender encoding for: $sender")
+                // encoding.maxBitrateBps = 500000; // Set max bitrate to ensure quality
+                // encoding.minBitrateBps = 300000; // Set min bitrate to ensure stability
+                encoding.bitratePriority = 1.0 // High priority for bitrate
+                encoding.networkPriority = Priority.HIGH // High priority for network
+                encoding.adaptiveAudioPacketTime = true
+            }
+        }
     }
 
     private fun call(peerConnectionFactory: PeerConnectionFactory) {
@@ -361,7 +397,6 @@ class MainActivity : ComponentActivity() {
             .createAudioDeviceModule()
     }
 
-
     @Composable
     fun Greeting(name: String, modifier: Modifier = Modifier) {
         Text(
@@ -378,6 +413,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
 
 open class CustomPeerConnectionObserver: PeerConnection.Observer {
 

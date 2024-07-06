@@ -8,6 +8,19 @@ async function connect() {
     peerConnection.addEventListener("iceconnectionstatechange", onIceConnectionStateChanged);
     peerConnection.addEventListener("track", onTrackAdded);
 
+    // bidirectional (listen/receive only)
+    /*
+    const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: true,
+    });
+    peerConnection.addStream(mediaStream);
+    // vs. only add tracks
+    // for (const track of mediaStream.getTracks()) {
+    //     peerConnection.addTrack(track);
+    // }
+    */
+
     var emptyOffer = await peerConnection.createOffer({ "offerToReceiveAudio": true });
     console.log("local offer desc (ice-candidates-empty sdp) created: ", emptyOffer.sdp)
 

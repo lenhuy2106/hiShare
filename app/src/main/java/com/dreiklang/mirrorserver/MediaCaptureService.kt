@@ -175,6 +175,7 @@ class MediaCaptureService : Service() {
     private fun start(peerConnectionFactory: PeerConnectionFactory) {
         // empty iceServerList
         val iceServers: List<IceServer> = ArrayList()
+        // val iceServers: List<IceServer> = arrayListOf(PeerConnection.IceServer("stun:stun3.l.google.com:3478"))
 
         //create sdpConstraints
         val sdpConstraints = MediaConstraints()

@@ -63,6 +63,7 @@ dependencies {
     // implementation(libs.stream.webrtc.android)
     // webserver
     implementation(libs.nanohttpd.nanohttpd)
+    implementation(project(":stream-webrtc-android"))
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

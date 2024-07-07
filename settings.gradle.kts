@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MirrorServer"
 include(":app")
- 
+include(":stream-webrtc-android")

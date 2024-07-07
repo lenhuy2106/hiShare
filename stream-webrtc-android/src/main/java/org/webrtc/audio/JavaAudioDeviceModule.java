@@ -14,6 +14,7 @@ import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
+import android.media.projection.MediaProjection;
 import android.os.Build;
 import androidx.annotation.RequiresApi;
 import java.util.concurrent.ScheduledExecutorService;
@@ -52,6 +53,7 @@ public class JavaAudioDeviceModule implements AudioDeviceModule {
     private boolean useLowLatency;
     private boolean enableVolumeLogger;
     private AudioRecordDataCallback audioRecordDataCallback;
+    private MediaProjection mediaProjection;
 
     private Builder(Context context) {
       this.context = context;
@@ -232,6 +234,11 @@ public class JavaAudioDeviceModule implements AudioDeviceModule {
       return this;
     }
 
+    public Builder setMediaProjection(MediaProjection mediaProjection) {
+      this.mediaProjection = mediaProjection;
+      return this;
+    }
+
     /**
      * Construct an AudioDeviceModule based on the supplied arguments. The caller takes ownership
      * and is responsible for calling release().
@@ -267,6 +274,9 @@ public class JavaAudioDeviceModule implements AudioDeviceModule {
       final WebRtcAudioRecord audioInput = new WebRtcAudioRecord(context, executor, audioManager,
           audioSource, audioFormat, audioRecordErrorCallback, audioRecordStateCallback,
           samplesReadyCallback, audioRecordDataCallback, useHardwareAcousticEchoCanceler, useHardwareNoiseSuppressor);
+      if (mediaProjection != null) {
+        audioInput.setMediaProjection(mediaProjection);
+      }
       final WebRtcAudioTrack audioOutput =
           new WebRtcAudioTrack(context, audioManager, audioAttributes, audioTrackErrorCallback,
               audioTrackStateCallback, useLowLatency, enableVolumeLogger);

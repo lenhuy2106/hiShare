@@ -12,13 +12,16 @@ package org.webrtc.audio;
 
 import android.annotation.TargetApi;
 import android.content.Context;
+import android.media.AudioAttributes;
 import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioPlaybackCaptureConfiguration;
 import android.media.AudioRecord;
 import android.media.AudioRecordingConfiguration;
 import android.media.AudioTimestamp;
 import android.media.MediaRecorder.AudioSource;
+import android.media.projection.MediaProjection;
 import android.os.Build;
 import android.os.Process;
 import androidx.annotation.Nullable;
@@ -108,6 +111,11 @@ class WebRtcAudioRecord {
   private final @Nullable SamplesReadyCallback audioSamplesReadyCallback;
   private final boolean isAcousticEchoCancelerSupported;
   private final boolean isNoiseSuppressorSupported;
+  private MediaProjection mediaProjection;
+
+  public void setMediaProjection(MediaProjection mediaProjection) {
+    this.mediaProjection = mediaProjection;
+  }
 
   /**
    * Audio thread which keeps calling ByteBuffer.read() waiting for audio
@@ -208,6 +216,8 @@ class WebRtcAudioRecord {
         WebRtcAudioEffects.isAcousticEchoCancelerSupported(),
         WebRtcAudioEffects.isNoiseSuppressorSupported());
   }
+
+
 
   public WebRtcAudioRecord(Context context, ScheduledExecutorService scheduler,
       AudioManager audioManager, int audioSource, int audioFormat,
@@ -325,8 +335,8 @@ class WebRtcAudioRecord {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
         // Use the AudioRecord.Builder class on Android M (23) and above.
         // Throws IllegalArgumentException.
-        audioRecord = createAudioRecordOnMOrHigher(
-            audioSource, sampleRate, channelConfig, audioFormat, bufferSizeInBytes);
+        audioRecord = createProjectionAudioRecordOnMOrHigher(
+            audioSource, sampleRate, channelConfig, audioFormat, bufferSizeInBytes, mediaProjection);
         audioSourceMatchesRecordingSessionRef.set(null);
         if (preferredDevice != null) {
           setPreferredDevice(preferredDevice);
@@ -441,6 +451,26 @@ class WebRtcAudioRecord {
                             .build())
         .setBufferSizeInBytes(bufferSizeInBytes)
         .build();
+  }
+
+  @RequiresApi(api = Build.VERSION_CODES.Q)
+  @TargetApi(Build.VERSION_CODES.M)
+  private static AudioRecord createProjectionAudioRecordOnMOrHigher(
+          int audioSource, int sampleRate, int channelConfig, int audioFormat, int bufferSizeInBytes, MediaProjection mediaProjection) {
+    Logging.d(TAG, "createAudioRecordOnMOrHigher");
+    AudioPlaybackCaptureConfiguration config = new AudioPlaybackCaptureConfiguration
+            .Builder(mediaProjection)
+            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            .build();
+    return new AudioRecord.Builder()
+            .setAudioPlaybackCaptureConfig(config)
+            .setAudioFormat(new AudioFormat.Builder()
+                    .setEncoding(audioFormat)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(channelConfig)
+                    .build())
+            .setBufferSizeInBytes(bufferSizeInBytes)
+            .build();
   }
 
   private static AudioRecord createAudioRecordOnLowerThanM(

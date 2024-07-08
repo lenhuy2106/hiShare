@@ -40,21 +40,13 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.icu.text.SimpleDateFormat
-import android.media.AudioAttributes
-import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.ServiceCompat
-import com.dreiklang.mirrorserver.MainActivity.Companion
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.runBlocking
 import org.webrtc.AudioTrack
@@ -81,14 +73,15 @@ import org.webrtc.audio.JavaAudioDeviceModule.AudioRecordStateCallback
 import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackErrorCallback
 import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackStartErrorCode
 import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackStateCallback
-import java.io.File
-import java.io.FileOutputStream
+import java.io.InputStream
+import java.security.KeyStore
 import java.util.*
-import kotlin.concurrent.thread
+import javax.net.ssl.KeyManagerFactory
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlin.experimental.and
+
 
 class MediaCaptureService : Service() {
     private lateinit var mediaProjectionManager: MediaProjectionManager
@@ -426,7 +419,17 @@ class MediaCaptureService : Service() {
                     }
                 }
             }
-        }.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+        }
+        Log.i(TAG, "ssl: loading keystore...")
+        val keyStore = KeyStore.getInstance(KeyStore.getDefaultType())
+        val keyStoreStream: InputStream = assets.open("keystore1.bks")
+        keyStore.load(keyStoreStream, "schneeball".toCharArray())
+        val keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+        keyManagerFactory.init(keyStore, "schneeball".toCharArray())
+        Log.i(TAG, "ssl: keystore loaded...: size ${keyStore.size()}")
+
+        webserver.makeSecure(NanoHTTPD.makeSSLSocketFactory(keyStore, keyManagerFactory), null)
+        webserver.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
 
         // init peerConnectionFactory globals
         PeerConnectionFactory.initialize(

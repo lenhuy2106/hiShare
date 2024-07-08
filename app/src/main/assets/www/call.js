@@ -62,8 +62,14 @@ async function onIceConnectionStateChanged(ev) {
 async function onTrackAdded(ev) {
         console.log("on track negotiated: ", ev.track.kind);
         // play audio in browser
-        const audioCtx = new AudioContext();
         const stream = new MediaStream([ev.track]);
+
+        // chrome bug workaround: https://stackoverflow.com/questions/24287054/chrome-wont-play-webaudio-getusermedia-via-webrtc-peer-js/55644983#55644983
+        var audioObj = document.createElement("AUDIO");
+        audioObj.srcObject = stream;
+        audioObj = null;
+
+        const audioCtx = new AudioContext();
         const source = audioCtx.createMediaStreamSource(stream);
         source.connect(audioCtx.destination);
 }
